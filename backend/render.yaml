@@ -1,15 +1,13 @@
-{
-  "version": 2,
-  "builds": [
-    {
-      "src": "src/index.ts",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "src/index.ts"
-    }
-  ]
-}
+services:
+  - type: web
+    name: gpms-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install --production=false && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000

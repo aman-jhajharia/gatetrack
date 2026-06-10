@@ -68,7 +68,7 @@ Score = Lecture% × 0.30 + Practice% × 0.40 + Revision% × 0.20 + MockAvg% × 0
 ### Backend (Render)
 1. Connect your GitHub repo to Render
 2. Set root directory to `backend/`
-3. Build command: `npm install && npm run build`
+3. Build command: `npm install --production=false && npm run build`
 4. Start command: `npm start`
 5. Add all env variables from `.env.example`
 
