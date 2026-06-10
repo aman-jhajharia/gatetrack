@@ -135,6 +135,18 @@ export interface MockAnalytics {
   trend: { date: string; testName: string; scorePct: number; accuracy: number }[];
 }
 
+export interface QuestionLog {
+  _id: string;
+  userId: string;
+  practiceUnitId: string;
+  questionIdentifier: string;
+  timesPracticed: number;
+  toughness: number;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   data?: T;

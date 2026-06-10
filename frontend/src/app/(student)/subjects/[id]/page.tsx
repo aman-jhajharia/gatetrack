@@ -3,13 +3,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import api from '@/lib/api';
-import { Subject, Unit, Lecture, LectureProgress, PracticeUnit, QuestionProgress } from '@/types';
+import { Subject, Unit, Lecture, LectureProgress, PracticeUnit, QuestionProgress, QuestionLog } from '@/types';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { toast } from '@/components/ui/Toaster';
 import { calcLectureScore, cn } from '@/lib/utils';
 import {
   BookOpen, ChevronDown, ChevronUp, Check, Loader2, FlaskConical,
-  StickyNote, ClipboardList, Star,
+  StickyNote, ClipboardList, Star, Trash2, Plus, Minus,
 } from 'lucide-react';
 
 export default function SubjectDetailPage() {
@@ -20,7 +20,10 @@ export default function SubjectDetailPage() {
   const [lectureProgress, setLectureProgress] = useState<Map<string, LectureProgress>>(new Map());
   const [practiceUnits, setPracticeUnits] = useState<PracticeUnit[]>([]);
   const [practiceProgress, setPracticeProgress] = useState<Map<string, QuestionProgress>>(new Map());
+  const [questionLogs, setQuestionLogs] = useState<Map<string, QuestionLog[]>>(new Map());
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
+  const [newLogInputs, setNewLogInputs] = useState<Record<string, { questionIdentifier: string; notes: string; toughness: number; timesPracticed: number }>>({});
   const [activeTab, setActiveTab] = useState<'lectures' | 'practice'>('lectures');
   const [loading, setLoading] = useState(true);
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
@@ -55,10 +58,20 @@ export default function SubjectDetailPage() {
       setPracticeUnits(pracList);
 
       const qProgPromises = pracList.map((pu) => api.get(`/practice/${pu._id}/progress`).catch(() => ({ data: { data: null } })));
-      const qProgResults = await Promise.all(qProgPromises);
+      const qLogPromises = pracList.map((pu) => api.get(`/practice/${pu._id}/question-logs`).catch(() => ({ data: { data: [] } })));
+      
+      const [qProgResults, qLogResults] = await Promise.all([
+        Promise.all(qProgPromises),
+        Promise.all(qLogPromises),
+      ]);
+
       const qProgMap = new Map<string, QuestionProgress>();
       qProgResults.forEach((r, i) => { if (r.data.data) qProgMap.set(pracList[i]._id, r.data.data); });
       setPracticeProgress(qProgMap);
+
+      const qLogMap = new Map<string, QuestionLog[]>();
+      qLogResults.forEach((r, i) => { if (r.data.data) qLogMap.set(pracList[i]._id, r.data.data); });
+      setQuestionLogs(qLogMap);
     } catch {
       toast('Failed to load subject data', 'error');
     } finally {
@@ -99,6 +112,112 @@ export default function SubjectDetailPage() {
       toast('Practice progress saved', 'success');
     } catch {
       toast('Failed to save', 'error');
+    }
+  };
+
+  const getLogInput = (practiceUnitId: string) => {
+    return newLogInputs[practiceUnitId] || {
+      questionIdentifier: '',
+      notes: '',
+      toughness: 3,
+      timesPracticed: 1,
+    };
+  };
+
+  const setLogInput = (practiceUnitId: string, field: string, value: any) => {
+    setNewLogInputs((prev) => ({
+      ...prev,
+      [practiceUnitId]: {
+        ...getLogInput(practiceUnitId),
+        [field]: value,
+      },
+    }));
+  };
+
+  const toggleLogExpanded = (practiceUnitId: string) => {
+    setExpandedLogs((prev) => {
+      const next = new Set(prev);
+      next.has(practiceUnitId) ? next.delete(practiceUnitId) : next.add(practiceUnitId);
+      return next;
+    });
+  };
+
+  const handleAddQuestionLog = async (practiceUnitId: string) => {
+    const input = getLogInput(practiceUnitId);
+    if (!input.questionIdentifier.trim()) {
+      toast('Please enter a question number/ID', 'error');
+      return;
+    }
+    try {
+      const res = await api.post(`/practice/${practiceUnitId}/question-logs`, {
+        questionIdentifier: input.questionIdentifier.trim(),
+        timesPracticed: input.timesPracticed,
+        toughness: input.toughness,
+        notes: input.notes.trim(),
+      });
+      
+      const newLog = res.data.data as QuestionLog;
+      setQuestionLogs((prev) => {
+        const nextMap = new Map(prev);
+        const list = nextMap.get(practiceUnitId) || [];
+        const index = list.findIndex((l) => l.questionIdentifier.toLowerCase() === newLog.questionIdentifier.toLowerCase());
+        if (index > -1) {
+          list[index] = newLog;
+        } else {
+          list.push(newLog);
+        }
+        return nextMap.set(practiceUnitId, [...list]);
+      });
+
+      // Clear input fields
+      setNewLogInputs((prev) => ({
+        ...prev,
+        [practiceUnitId]: {
+          questionIdentifier: '',
+          notes: '',
+          toughness: 3,
+          timesPracticed: 1,
+        },
+      }));
+      toast('Question logged successfully', 'success');
+    } catch {
+      toast('Failed to save question log', 'error');
+    }
+  };
+
+  const handleUpdateTimesPracticed = async (practiceUnitId: string, log: QuestionLog, delta: number) => {
+    const newTimes = Math.max(1, log.timesPracticed + delta);
+    try {
+      const res = await api.post(`/practice/${practiceUnitId}/question-logs`, {
+        questionIdentifier: log.questionIdentifier,
+        timesPracticed: newTimes,
+      });
+      const updatedLog = res.data.data as QuestionLog;
+      setQuestionLogs((prev) => {
+        const nextMap = new Map(prev);
+        const list = nextMap.get(practiceUnitId) || [];
+        const index = list.findIndex((l) => l._id === log._id);
+        if (index > -1) {
+          list[index] = updatedLog;
+        }
+        return nextMap.set(practiceUnitId, [...list]);
+      });
+    } catch {
+      toast('Failed to update practice count', 'error');
+    }
+  };
+
+  const handleDeleteQuestionLog = async (practiceUnitId: string, logId: string) => {
+    try {
+      await api.delete(`/practice/question-logs/${logId}`);
+      setQuestionLogs((prev) => {
+        const nextMap = new Map(prev);
+        const list = nextMap.get(practiceUnitId) || [];
+        return nextMap.set(practiceUnitId, list.filter((l) => l._id !== logId));
+      });
+      toast('Question log deleted', 'success');
+    } catch {
+      toast('Failed to delete question log', 'error');
     }
   };
 
@@ -356,6 +475,143 @@ export default function SubjectDetailPage() {
                       />
                     </div>
                   </div>
+
+                  {/* Granular Question Logs Section */}
+                  <hr className="my-4 border-white/5" />
+                  <div>
+                    <button
+                      onClick={() => toggleLogExpanded(pu._id)}
+                      className="flex items-center gap-2 text-xs font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      {expandedLogs.has(pu._id) ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                      <span>Granular Question Tracker ({(questionLogs.get(pu._id) || []).length} logged)</span>
+                    </button>
+                  </div>
+
+                  {expandedLogs.has(pu._id) && (
+                    <div className="mt-4 border-t border-white/5 pt-4 space-y-4">
+                      {/* Add/Log form */}
+                      <div className="bg-white/2 rounded-lg p-3 border border-white/5 space-y-3">
+                        <p className="text-xs font-semibold text-white">Log a Question</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                          <div>
+                            <label className="text-[10px] text-slate-500 uppercase">Question #</label>
+                            <input
+                              type="text"
+                              value={getLogInput(pu._id).questionIdentifier}
+                              placeholder="e.g. 15, Q12"
+                              onChange={(e) => setLogInput(pu._id, 'questionIdentifier', e.target.value)}
+                              className="w-full mt-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-500 uppercase">Toughness</label>
+                            <div className="flex gap-1 mt-1.5">
+                              {[1, 2, 3, 4, 5].map((val) => (
+                                <button
+                                  key={val}
+                                  type="button"
+                                  onClick={() => setLogInput(pu._id, 'toughness', val)}
+                                  className={cn(
+                                    'p-0.5 rounded transition-all',
+                                    getLogInput(pu._id).toughness >= val ? 'text-amber-400' : 'text-slate-600'
+                                  )}
+                                >
+                                  <Star className="w-4 h-4 fill-current" />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="text-[10px] text-slate-500 uppercase">Question Note</label>
+                            <div className="flex gap-2 mt-1">
+                              <input
+                                  type="text"
+                                  value={getLogInput(pu._id).notes}
+                                  placeholder="Hard formula / key concept / trick..."
+                                  onChange={(e) => setLogInput(pu._id, 'notes', e.target.value)}
+                                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleAddQuestionLog(pu._id)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors shrink-0"
+                              >
+                                Log Question
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Logs List Table */}
+                      {(!questionLogs.get(pu._id) || questionLogs.get(pu._id)!.length === 0) ? (
+                        <p className="text-slate-500 text-xs text-center py-2">No individual questions logged yet</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="border-b border-white/5 text-[10px] text-slate-500 uppercase font-semibold">
+                                <th className="py-2">Question</th>
+                                <th className="py-2 text-center w-28">Times Practiced</th>
+                                <th className="py-2 text-center w-28">Toughness</th>
+                                <th className="py-2">Notes</th>
+                                <th className="py-2 text-right w-10"></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5 text-xs text-white">
+                              {questionLogs.get(pu._id)!.map((log) => (
+                                <tr key={log._id} className="hover:bg-white/1">
+                                  <td className="py-2.5 font-bold text-indigo-400">{log.questionIdentifier}</td>
+                                  <td className="py-2.5 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        onClick={() => handleUpdateTimesPracticed(pu._id, log, -1)}
+                                        className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                                      >
+                                        <Minus className="w-3 h-3" />
+                                      </button>
+                                      <span className="font-bold w-4 text-center">{log.timesPracticed}</span>
+                                      <button
+                                        onClick={() => handleUpdateTimesPracticed(pu._id, log, 1)}
+                                        className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                                      >
+                                        <Plus className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5">
+                                    <div className="flex justify-center gap-0.5">
+                                      {[1, 2, 3, 4, 5].map((val) => (
+                                        <Star
+                                          key={val}
+                                          className={cn(
+                                            'w-3.5 h-3.5',
+                                            log.toughness >= val ? 'text-amber-400 fill-current' : 'text-slate-700'
+                                          )}
+                                        />
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5 text-slate-300 max-w-xs truncate" title={log.notes}>
+                                    {log.notes || <span className="text-slate-600 italic">No notes</span>}
+                                  </td>
+                                  <td className="py-2.5 text-right">
+                                    <button
+                                      onClick={() => handleDeleteQuestionLog(pu._id, log._id)}
+                                      className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })
