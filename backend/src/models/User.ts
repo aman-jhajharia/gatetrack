@@ -25,12 +25,10 @@ const UserSchema = new Schema<IUser>(
   { timestamps: true }
 );
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(UserSchema as any).pre('save', async function (this: any, next: () => void) {
-  if (!this.isModified('password')) { next(); return; }
+UserSchema.pre('save', async function (this: IUser) {
+  if (!this.isModified('password')) return;
   const salt = await bcrypt.genSalt(12);
   this.password = await bcrypt.hash(this.password, salt);
-  next();
 });
 
 UserSchema.methods.comparePassword = async function (candidatePassword: string): Promise<boolean> {
