@@ -23,9 +23,6 @@ npm run seed          # Creates admin + 13 subjects
 npm run dev           # Starts on port 5000
 ```
 
-**Default Admin Credentials:**
-- Username: `admin`
-- Password: `Admin@123`
 
 ### 2. Frontend Setup
 
