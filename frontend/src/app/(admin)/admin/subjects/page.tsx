@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
-import { Subject, Unit, Lecture } from '@/types';
+import { Subject, Unit, Lecture, PracticeUnit } from '@/types';
 import { toast } from '@/components/ui/Toaster';
 import { Plus, Pencil, Trash2, Loader2, ChevronDown, ChevronUp, BookOpen, X, Check } from 'lucide-react';
 
@@ -12,6 +12,7 @@ export default function AdminSubjectsPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [units, setUnits] = useState<Record<string, Unit[]>>({});
   const [lectures, setLectures] = useState<Record<string, Lecture[]>>({});
+  const [practiceUnits, setPracticeUnits] = useState<Record<string, PracticeUnit[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -29,6 +30,10 @@ export default function AdminSubjectsPage() {
   const [editLec, setEditLec] = useState<Lecture | null>(null);
   const [lecForm, setLecForm] = useState({ title: '', durationMinutes: '', sequenceNumber: '' });
 
+  const [showPracForm, setShowPracForm] = useState<string | null>(null);
+  const [editPrac, setEditPrac] = useState<PracticeUnit | null>(null);
+  const [pracForm, setPracForm] = useState({ unitName: '', totalQuestions: '' });
+
   const loadSubjects = useCallback(async () => {
     try {
       const res = await api.get('/subjects');
@@ -45,6 +50,12 @@ export default function AdminSubjectsPage() {
     setUnits((prev) => ({ ...prev, [subjectId]: res.data.data }));
   };
 
+  const loadPracticeUnits = async (subjectId: string) => {
+    if (practiceUnits[subjectId]) return;
+    const res = await api.get(`/subjects/${subjectId}/practice`);
+    setPracticeUnits((prev) => ({ ...prev, [subjectId]: res.data.data }));
+  };
+
   const loadLectures = async (unitId: string) => {
     if (lectures[unitId]) return;
     const res = await api.get(`/units/${unitId}/lectures`);
@@ -54,7 +65,13 @@ export default function AdminSubjectsPage() {
   const toggleSubject = async (subId: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(subId)) { next.delete(subId); } else { next.add(subId); loadUnits(subId); }
+      if (next.has(subId)) {
+        next.delete(subId);
+      } else {
+        next.add(subId);
+        loadUnits(subId);
+        loadPracticeUnits(subId);
+      }
       return next;
     });
   };
@@ -144,6 +161,47 @@ export default function AdminSubjectsPage() {
     } catch { toast('Failed', 'error'); }
   };
 
+  // Practice Unit CRUD
+  const savePrac = async (e: React.FormEvent, subjectId: string) => {
+    e.preventDefault();
+    try {
+      if (editPrac) {
+        await api.put(`/practice/${editPrac._id}`, {
+          unitName: pracForm.unitName,
+          totalQuestions: Number(pracForm.totalQuestions),
+        });
+        toast('Practice unit updated', 'success');
+      } else {
+        await api.post(`/subjects/${subjectId}/practice`, {
+          unitName: pracForm.unitName,
+          totalQuestions: Number(pracForm.totalQuestions),
+        });
+        toast('Practice unit created', 'success');
+      }
+      setShowPracForm(null);
+      setEditPrac(null);
+      setPracForm({ unitName: '', totalQuestions: '' });
+      // Force reload practice units
+      const res = await api.get(`/subjects/${subjectId}/practice`);
+      setPracticeUnits((prev) => ({ ...prev, [subjectId]: res.data.data }));
+    } catch {
+      toast('Failed to save practice unit', 'error');
+    }
+  };
+
+  const deletePrac = async (id: string, name: string, subjectId: string) => {
+    if (!confirm(`Delete practice unit "${name}"?`)) return;
+    try {
+      await api.delete(`/practice/${id}`);
+      toast('Practice unit deleted', 'success');
+      // Force reload practice units
+      const res = await api.get(`/subjects/${subjectId}/practice`);
+      setPracticeUnits((prev) => ({ ...prev, [subjectId]: res.data.data }));
+    } catch {
+      toast('Failed to delete practice unit', 'error');
+    }
+  };
+
   if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-indigo-500" /></div>;
 
   return (
@@ -193,79 +251,130 @@ export default function AdminSubjectsPage() {
               </div>
             </div>
 
-            {/* Units */}
+            {/* Content Sections: Lectures vs Practice */}
             {expanded.has(sub._id) && (
-              <div className="border-t border-white/5 bg-white/1">
-                <div className="p-3 flex justify-between items-center">
-                  <span className="text-[10px] text-slate-500 uppercase font-semibold">Units ({(units[sub._id] || []).length})</span>
-                  <button onClick={() => { setEditUnit(null); setUnitForm({ name: '', order: '' }); setShowUnitForm(sub._id); }}
-                    className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
-                    <Plus className="w-3 h-3" /> Add Unit
-                  </button>
+              <div className="border-t border-white/5 bg-white/1 grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5">
+                {/* Column 1: Lectures & Units */}
+                <div className="p-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Units ({(units[sub._id] || []).length})</span>
+                    <button onClick={() => { setEditUnit(null); setUnitForm({ name: '', order: '' }); setShowUnitForm(sub._id); }}
+                      className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                      <Plus className="w-3 h-3" /> Add Unit
+                    </button>
+                  </div>
+
+                  {showUnitForm === sub._id && (
+                    <div className="pb-3">
+                      <form onSubmit={(e) => saveUnit(e, sub._id)} className="flex gap-2">
+                        <input value={unitForm.name} onChange={(e) => setUnitForm((f) => ({ ...f, name: e.target.value }))} placeholder="Unit name" className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                        <input type="number" value={unitForm.order} onChange={(e) => setUnitForm((f) => ({ ...f, order: e.target.value }))} placeholder="Order" className="w-16 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                        <button type="submit" className="px-3 py-1.5 gradient-primary rounded-lg text-white text-xs font-medium"><Check className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => setShowUnitForm(null)} className="px-3 py-1.5 bg-white/5 rounded-lg text-slate-400 text-xs"><X className="w-3 h-3" /></button>
+                      </form>
+                    </div>
+                  )}
+
+                  <div className="divide-y divide-white/5 space-y-1">
+                    {(units[sub._id] || []).map((unit) => (
+                      <div key={unit._id} className="border border-white/5 rounded-lg overflow-hidden bg-white/1">
+                        <div className="flex items-center gap-2 px-3 py-2 hover:bg-white/2">
+                          <button onClick={() => toggleUnit(unit._id)} className="flex-1 flex items-center gap-2 text-left text-xs font-semibold text-slate-300 min-w-0">
+                            {expandedUnits.has(unit._id) ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                            <span className="truncate">{unit.name}</span>
+                          </button>
+                          <div className="flex gap-1 shrink-0">
+                            <button onClick={() => { setEditUnit(unit); setUnitForm({ name: unit.name, order: String(unit.order) }); setShowUnitForm(sub._id); }}
+                              className="p-1 text-slate-500 hover:text-indigo-400"><Pencil className="w-3 h-3" /></button>
+                            <button onClick={() => deleteUnit(unit._id, unit.name, sub._id)}
+                              className="p-1 text-slate-500 hover:text-red-400"><Trash2 className="w-3 h-3" /></button>
+                            <button onClick={() => { setEditLec(null); setLecForm({ title: '', durationMinutes: '', sequenceNumber: '' }); setShowLecForm(unit._id); }}
+                              className="p-1 text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5 text-[10px]">
+                              <Plus className="w-3 h-3" />Lec
+                            </button>
+                          </div>
+                        </div>
+
+                        {showLecForm === unit._id && (
+                          <div className="px-3 pb-2 border-t border-white/5 pt-2">
+                            <form onSubmit={(e) => saveLec(e, unit._id)} className="flex gap-2 flex-wrap">
+                              <input value={lecForm.title} onChange={(e) => setLecForm((f) => ({ ...f, title: e.target.value }))} placeholder="Lecture title" className="flex-1 min-w-36 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                              <input type="number" value={lecForm.durationMinutes} onChange={(e) => setLecForm((f) => ({ ...f, durationMinutes: e.target.value }))} placeholder="Mins" className="w-16 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                              <input type="number" value={lecForm.sequenceNumber} onChange={(e) => setLecForm((f) => ({ ...f, sequenceNumber: e.target.value }))} placeholder="Seq#" className="w-16 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                              <button type="submit" className="px-3 py-1.5 gradient-primary rounded-lg text-white text-xs"><Check className="w-3 h-3" /></button>
+                              <button type="button" onClick={() => setShowLecForm(null)} className="px-3 py-1.5 bg-white/5 rounded-lg text-slate-400 text-xs"><X className="w-3 h-3" /></button>
+                            </form>
+                          </div>
+                        )}
+
+                        {expandedUnits.has(unit._id) && (
+                          <div className="divide-y divide-white/5 bg-white/1 border-t border-white/5">
+                            {(lectures[unit._id] || []).map((lec) => (
+                              <div key={lec._id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/2">
+                                <span className="text-[10px] font-bold text-slate-500 w-5 text-right">{lec.sequenceNumber}.</span>
+                                <span className="flex-1 text-xs text-slate-400 truncate">{lec.title}</span>
+                                <span className="text-[10px] text-slate-500">{lec.durationMinutes}m</span>
+                                <div className="flex gap-1">
+                                  <button onClick={() => { setEditLec(lec); setLecForm({ title: lec.title, durationMinutes: String(lec.durationMinutes), sequenceNumber: String(lec.sequenceNumber) }); setShowLecForm(unit._id); }}
+                                    className="p-0.5 text-slate-500 hover:text-indigo-400"><Pencil className="w-3 h-3" /></button>
+                                  <button onClick={() => deleteLec(lec._id, lec.title, unit._id)}
+                                    className="p-0.5 text-slate-500 hover:text-red-400"><Trash2 className="w-3 h-3" /></button>
+                                </div>
+                              </div>
+                            ))}
+                            {(lectures[unit._id] || []).length === 0 && (
+                              <p className="text-slate-600 text-[10px] py-2 text-center italic">No lectures in this unit</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {(units[sub._id] || []).length === 0 && (
+                      <p className="text-slate-600 text-xs text-center py-4">No units added</p>
+                    )}
+                  </div>
                 </div>
 
-                {showUnitForm === sub._id && (
-                  <div className="px-3 pb-3">
-                    <form onSubmit={(e) => saveUnit(e, sub._id)} className="flex gap-2">
-                      <input value={unitForm.name} onChange={(e) => setUnitForm((f) => ({ ...f, name: e.target.value }))} placeholder="Unit name" className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                      <input type="number" value={unitForm.order} onChange={(e) => setUnitForm((f) => ({ ...f, order: e.target.value }))} placeholder="Order" className="w-16 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                      <button type="submit" className="px-3 py-1.5 gradient-primary rounded-lg text-white text-xs font-medium"><Check className="w-3 h-3" /></button>
-                      <button type="button" onClick={() => setShowUnitForm(null)} className="px-3 py-1.5 bg-white/5 rounded-lg text-slate-400 text-xs"><X className="w-3 h-3" /></button>
-                    </form>
+                {/* Column 2: Practice Units */}
+                <div className="p-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Practice Units ({(practiceUnits[sub._id] || []).length})</span>
+                    <button onClick={() => { setEditPrac(null); setPracForm({ unitName: '', totalQuestions: '' }); setShowPracForm(sub._id); }}
+                      className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                      <Plus className="w-3 h-3" /> Add Practice Unit
+                    </button>
                   </div>
-                )}
 
-                <div className="divide-y divide-white/5">
-                  {(units[sub._id] || []).map((unit) => (
-                    <div key={unit._id}>
-                      <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-white/2">
-                        <button onClick={() => toggleUnit(unit._id)} className="flex-1 flex items-center gap-2 text-left text-xs font-medium text-slate-300 min-w-0">
-                          {expandedUnits.has(unit._id) ? <ChevronUp className="w-3 h-3 text-slate-500" /> : <ChevronDown className="w-3 h-3 text-slate-500" />}
-                          <span className="truncate">{unit.name}</span>
-                        </button>
-                        <div className="flex gap-1 shrink-0">
-                          <button onClick={() => { setEditUnit(unit); setUnitForm({ name: unit.name, order: String(unit.order) }); setShowUnitForm(sub._id); }}
-                            className="p-1 text-slate-600 hover:text-indigo-400"><Pencil className="w-3 h-3" /></button>
-                          <button onClick={() => deleteUnit(unit._id, unit.name, sub._id)}
-                            className="p-1 text-slate-600 hover:text-red-400"><Trash2 className="w-3 h-3" /></button>
-                          <button onClick={() => { setEditLec(null); setLecForm({ title: '', durationMinutes: '', sequenceNumber: '' }); setShowLecForm(unit._id); }}
-                            className="p-1 text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5 text-[10px]">
-                            <Plus className="w-3 h-3" />Lec
-                          </button>
+                  {showPracForm === sub._id && (
+                    <div className="pb-3 animate-fade-in">
+                      <form onSubmit={(e) => savePrac(e, sub._id)} className="flex gap-2">
+                        <input value={pracForm.unitName} onChange={(e) => setPracForm((f) => ({ ...f, unitName: e.target.value }))} placeholder="e.g. Unit 1: Graph Theory" className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                        <input type="number" value={pracForm.totalQuestions} onChange={(e) => setPracForm((f) => ({ ...f, totalQuestions: e.target.value }))} placeholder="Total Qs" className="w-20 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                        <button type="submit" className="px-3 py-1.5 gradient-primary rounded-lg text-white text-xs font-medium"><Check className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => setShowPracForm(null)} className="px-3 py-1.5 bg-white/5 rounded-lg text-slate-400 text-xs"><X className="w-3 h-3" /></button>
+                      </form>
+                    </div>
+                  )}
+
+                  <div className="divide-y divide-white/5 space-y-1.5">
+                    {(practiceUnits[sub._id] || []).map((pu) => (
+                      <div key={pu._id} className="flex items-center justify-between p-3 hover:bg-white/2 rounded-lg border border-white/5 bg-white/1">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs text-white font-semibold">{pu.unitName}</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">{pu.totalQuestions} total questions</p>
+                        </div>
+                        <div className="flex gap-1 shrink-0 ml-3">
+                          <button onClick={() => { setEditPrac(pu); setPracForm({ unitName: pu.unitName, totalQuestions: String(pu.totalQuestions) }); setShowPracForm(sub._id); }}
+                            className="p-1.5 text-slate-500 hover:text-indigo-400 transition-colors"><Pencil className="w-3 h-3" /></button>
+                          <button onClick={() => deletePrac(pu._id, pu.unitName, sub._id)}
+                            className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"><Trash2 className="w-3 h-3" /></button>
                         </div>
                       </div>
-
-                      {showLecForm === unit._id && (
-                        <div className="px-6 pb-2">
-                          <form onSubmit={(e) => saveLec(e, unit._id)} className="flex gap-2 flex-wrap">
-                            <input value={lecForm.title} onChange={(e) => setLecForm((f) => ({ ...f, title: e.target.value }))} placeholder="Lecture title" className="flex-1 min-w-40 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                            <input type="number" value={lecForm.durationMinutes} onChange={(e) => setLecForm((f) => ({ ...f, durationMinutes: e.target.value }))} placeholder="Mins" className="w-16 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                            <input type="number" value={lecForm.sequenceNumber} onChange={(e) => setLecForm((f) => ({ ...f, sequenceNumber: e.target.value }))} placeholder="Seq#" className="w-16 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                            <button type="submit" className="px-3 py-1.5 gradient-primary rounded-lg text-white text-xs"><Check className="w-3 h-3" /></button>
-                            <button type="button" onClick={() => setShowLecForm(null)} className="px-3 py-1.5 bg-white/5 rounded-lg text-slate-400 text-xs"><X className="w-3 h-3" /></button>
-                          </form>
-                        </div>
-                      )}
-
-                      {expandedUnits.has(unit._id) && (
-                        <div className="divide-y divide-white/5 ml-4 border-l border-white/5">
-                          {(lectures[unit._id] || []).map((lec) => (
-                            <div key={lec._id} className="flex items-center gap-2 px-4 py-2 hover:bg-white/2">
-                              <span className="text-[10px] font-bold text-slate-600 w-5 text-right">{lec.sequenceNumber}.</span>
-                              <span className="flex-1 text-xs text-slate-400 truncate">{lec.title}</span>
-                              <span className="text-[10px] text-slate-600">{lec.durationMinutes}m</span>
-                              <div className="flex gap-1">
-                                <button onClick={() => { setEditLec(lec); setLecForm({ title: lec.title, durationMinutes: String(lec.durationMinutes), sequenceNumber: String(lec.sequenceNumber) }); setShowLecForm(unit._id); }}
-                                  className="p-0.5 text-slate-600 hover:text-indigo-400"><Pencil className="w-3 h-3" /></button>
-                                <button onClick={() => deleteLec(lec._id, lec.title, unit._id)}
-                                  className="p-0.5 text-slate-600 hover:text-red-400"><Trash2 className="w-3 h-3" /></button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    ))}
+                    {(practiceUnits[sub._id] || []).length === 0 && (
+                      <p className="text-slate-600 text-xs text-center py-4">No practice units added</p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
